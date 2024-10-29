@@ -1,18 +1,36 @@
+import { WIX_STORES_APP_ID } from "@/lib/constants";
 import { getWixClient, WixClient } from "@/lib/wix-client.base";
 import { cache } from "react";
 
-type ProductsSort = "last_updated" | "price_asc" | "price_desc";
+export type ProductsSort = "last_updated" | "price_asc" | "price_desc";
 
 interface QueryProductsFilter {
+  q?: string;
   collectionIds?: string[] | string;
   sort?: ProductsSort;
+  priceMin?: number;
+  priceMax?: number;
+  skip?: number;
+  limit?: number;
 }
 
 export async function queryProducts(
   wixClient: WixClient,
-  { collectionIds, sort = "last_updated" }: QueryProductsFilter,
+  {
+    q,
+    collectionIds,
+    sort = "last_updated",
+    priceMin,
+    priceMax,
+    skip,
+    limit,
+  }: QueryProductsFilter,
 ) {
   let query = wixClient.products.queryProducts();
+
+  if (q) {
+    query = query.startsWith("name", q);
+  }
   const collectionIdsArray = collectionIds
     ? Array.isArray(collectionIds)
       ? collectionIds
@@ -33,6 +51,18 @@ export async function queryProducts(
       query = query.descending("lastUpdated");
       break;
   }
+
+  if (priceMin) {
+    query = query.ge("priceData.price", priceMin);
+  }
+
+  if (priceMax) {
+    query = query.le("priceData.price", priceMax);
+  }
+
+  if (limit) query = query.limit(limit);
+  if (skip) query = query.skip(skip);
+
   return query.find();
 }
 
@@ -53,3 +83,48 @@ export const getProductBySlug = cache(
     return product;
   },
 );
+
+export async function getProductById(wixClient: WixClient, productId: string) {
+  const result = await wixClient.products.getProduct(productId);
+  return result.product;
+}
+
+export async function getRelatedProducts(
+  wixClient: WixClient,
+  productId: string,
+) {
+  const result = await wixClient.recommendations.getRecommendation(
+    [
+      {
+        _id: "68ebce04-b96a-4c52-9329-08fc9d8c1253",
+        appId: WIX_STORES_APP_ID,
+      },
+      {
+        _id: "d5aac1e1-2e53-4d11-85f7-7172710b4783",
+        appId: WIX_STORES_APP_ID,
+      },
+    ],
+    {
+      items: [
+        {
+          appId: WIX_STORES_APP_ID,
+          catalogItemId: productId,
+        },
+      ],
+      minimumRecommendedItems: 3,
+    },
+  );
+  const productIds = result.recommendation?.items
+    .map((item) => item.catalogItemId)
+    .filter((id) => id !== undefined);
+
+  if (!productIds || !productIds.length) return [];
+
+  const productsResult = await wixClient.products
+    .queryProducts()
+    .in("_id", productIds)
+    .limit(4)
+    .find();
+
+  return productsResult.items;
+}
